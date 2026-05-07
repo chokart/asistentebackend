@@ -5,25 +5,25 @@ import com.asistente.Asistente.repository.PendienteRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.telegram.telegrambots.client.okhttp.OkHttpTelegramClient;
-import org.telegram.telegrambots.longpolling.interfaces.LongPollingUpdateConsumer;
-import org.telegram.telegrambots.longpolling.starter.SpringLongPollingBot;
+import org.telegram.telegrambots.longpolling.TelegramBotsLongPollingApplication;
 import org.telegram.telegrambots.longpolling.util.LongPollingSingleThreadUpdateConsumer;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.Update;
-import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
 import java.util.List;
 import java.util.stream.Collectors;
 
 @Service
-public class TelegramBotService implements SpringLongPollingBot, LongPollingSingleThreadUpdateConsumer {
+public class TelegramBotService implements LongPollingSingleThreadUpdateConsumer {
 
     private TelegramClient telegramClient;
+    private TelegramBotsLongPollingApplication botApplication;
     
     @Value("${bot.token:}")
     private String botToken;
@@ -37,47 +37,47 @@ public class TelegramBotService implements SpringLongPollingBot, LongPollingSing
     private GroqService groqService;
 
     @PostConstruct
-    public void init() {
-        if (botToken != null && !botToken.isEmpty() && !botToken.equals("${TELEGRAM_BOT_TOKEN}")) {
+    public void start() {
+        if (botToken == null || botToken.isEmpty() || botToken.contains("{")) {
+            System.err.println("BOT: Token no configurado. Bot desactivado.");
+            return;
+        }
+
+        try {
             this.telegramClient = new OkHttpTelegramClient(botToken);
-            System.out.println("Bot de Telegram inicializado correctamente.");
-        } else {
-            System.err.println("ADVERTENCIA: Token de Telegram no configurado. El bot estará desactivado.");
+            this.botApplication = new TelegramBotsLongPollingApplication();
+            this.botApplication.registerBot(botToken, this);
+            System.out.println("BOT: Registrado con éxito.");
+        } catch (Exception e) {
+            System.err.println("BOT: Error al iniciar (posible token inválido): " + e.getMessage());
+        }
+    }
+
+    @PreDestroy
+    public void stop() {
+        try {
+            if (botApplication != null) botApplication.close();
+        } catch (Exception e) {
+            e.printStackTrace();
         }
     }
 
     @Override
-    public String getBotToken() {
-        return (botToken != null && !botToken.isEmpty()) ? botToken : "disabled";
-    }
-
-    @Override
-    public LongPollingUpdateConsumer getUpdatesConsumer() { return this; }
-
-    @Override
     public void consume(Update update) {
-        if (telegramClient == null) return;
         if (update.hasMessage() && update.getMessage().hasText()) {
             String messageText = update.getMessage().getText();
             long chatId = update.getMessage().getChatId();
 
             if (messageText.startsWith("/")) {
-                manejarComandos(chatId, messageText);
+                if (messageText.equals("/start")) enviarMensaje(chatId, "¡Hola! Soy tu asistente.");
+                else if (messageText.equals("/listar")) enviarMensaje(chatId, obtenerListaPendientes());
             } else {
-                manejarIA(chatId, messageText);
+                procesarConIA(chatId, messageText);
             }
         }
     }
 
-    private void manejarComandos(long chatId, String command) {
-        if (command.equals("/start")) {
-            enviarMensaje(chatId, "¡Hola! Puedes hablarme para gestionar tus tareas.");
-        } else if (command.equals("/listar")) {
-            enviarMensaje(chatId, obtenerListaPendientes());
-        }
-    }
-
-    private void manejarIA(long chatId, String mensaje) {
+    private void procesarConIA(long chatId, String mensaje) {
         try {
             String respuestaIA = groqService.procesarMensaje(mensaje);
             JsonNode nodo = objectMapper.readTree(respuestaIA);
@@ -95,7 +95,7 @@ public class TelegramBotService implements SpringLongPollingBot, LongPollingSing
                 enviarMensaje(chatId, obtenerListaPendientes());
             }
         } catch (Exception e) {
-            enviarMensaje(chatId, "Error procesando con IA.");
+            enviarMensaje(chatId, "Error con la IA.");
         }
     }
 
@@ -109,7 +109,10 @@ public class TelegramBotService implements SpringLongPollingBot, LongPollingSing
 
     private void enviarMensaje(long chatId, String texto) {
         if (telegramClient == null) return;
-        SendMessage message = SendMessage.builder().chatId(chatId).text(texto).build();
-        try { telegramClient.execute(message); } catch (TelegramApiException e) { e.printStackTrace(); }
+        try {
+            telegramClient.execute(SendMessage.builder().chatId(chatId).text(texto).build());
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 }
