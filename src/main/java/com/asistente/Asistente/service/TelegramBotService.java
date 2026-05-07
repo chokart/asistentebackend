@@ -25,8 +25,11 @@ public class TelegramBotService implements LongPollingSingleThreadUpdateConsumer
     private TelegramClient telegramClient;
     private TelegramBotsLongPollingApplication botApplication;
     
-    @Value("${bot.token:}")
+    @Value("${bot.token:NOT_FOUND}")
     private String botToken;
+
+    @Value("${groq.api.key:NOT_FOUND}")
+    private String groqKey;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -38,8 +41,12 @@ public class TelegramBotService implements LongPollingSingleThreadUpdateConsumer
 
     @PostConstruct
     public void start() {
-        if (botToken == null || botToken.isEmpty() || botToken.contains("{")) {
-            System.err.println("BOT: Token no configurado. Bot desactivado.");
+        System.out.println("DIAGNOSTICO: Iniciando chequeo de Bot...");
+        System.out.println("DIAGNOSTICO: Token encontrado: " + (botToken.equals("NOT_FOUND") ? "NO" : "SI (comienza con " + botToken.substring(0, 4) + ")"));
+        System.out.println("DIAGNOSTICO: Groq Key encontrada: " + (groqKey.equals("NOT_FOUND") ? "NO" : "SI"));
+
+        if (botToken.equals("NOT_FOUND") || botToken.isEmpty() || botToken.contains("${")) {
+            System.err.println("BOT: Error - El Token no se ha cargado desde las variables de entorno.");
             return;
         }
 
@@ -47,19 +54,16 @@ public class TelegramBotService implements LongPollingSingleThreadUpdateConsumer
             this.telegramClient = new OkHttpTelegramClient(botToken);
             this.botApplication = new TelegramBotsLongPollingApplication();
             this.botApplication.registerBot(botToken, this);
-            System.out.println("BOT: Registrado con éxito.");
+            System.out.println("BOT: !!! Registrado con éxito y escuchando mensajes !!!");
         } catch (Exception e) {
-            System.err.println("BOT: Error al iniciar (posible token inválido): " + e.getMessage());
+            System.err.println("BOT: Error crítico al registrar: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 
     @PreDestroy
     public void stop() {
-        try {
-            if (botApplication != null) botApplication.close();
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+        try { if (botApplication != null) botApplication.close(); } catch (Exception e) { }
     }
 
     @Override
@@ -67,9 +71,10 @@ public class TelegramBotService implements LongPollingSingleThreadUpdateConsumer
         if (update.hasMessage() && update.getMessage().hasText()) {
             String messageText = update.getMessage().getText();
             long chatId = update.getMessage().getChatId();
+            System.out.println("BOT: Mensaje recibido de " + chatId + ": " + messageText);
 
             if (messageText.startsWith("/")) {
-                if (messageText.equals("/start")) enviarMensaje(chatId, "¡Hola! Soy tu asistente.");
+                if (messageText.equals("/start")) enviarMensaje(chatId, "¡Hola! Soy tu asistente. Estoy vivo.");
                 else if (messageText.equals("/listar")) enviarMensaje(chatId, obtenerListaPendientes());
             } else {
                 procesarConIA(chatId, messageText);
@@ -95,7 +100,7 @@ public class TelegramBotService implements LongPollingSingleThreadUpdateConsumer
                 enviarMensaje(chatId, obtenerListaPendientes());
             }
         } catch (Exception e) {
-            enviarMensaje(chatId, "Error con la IA.");
+            enviarMensaje(chatId, "Error con la IA: " + e.getMessage());
         }
     }
 
@@ -112,7 +117,7 @@ public class TelegramBotService implements LongPollingSingleThreadUpdateConsumer
         try {
             telegramClient.execute(SendMessage.builder().chatId(chatId).text(texto).build());
         } catch (Exception e) {
-            e.printStackTrace();
+            System.err.println("BOT: Error al enviar mensaje: " + e.getMessage());
         }
     }
 }
