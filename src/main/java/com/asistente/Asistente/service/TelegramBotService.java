@@ -19,7 +19,7 @@ import org.telegram.telegrambots.meta.generics.TelegramClient;
 import java.util.List;
 import java.util.stream.Collectors;
 
-//@Service
+@Service
 public class TelegramBotService implements SpringLongPollingBot, LongPollingSingleThreadUpdateConsumer {
 
     private final TelegramClient telegramClient;
