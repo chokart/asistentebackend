@@ -24,15 +24,9 @@ public class GroqService {
         try {
             HttpClient client = HttpClient.newHttpClient();
             
-            String systemPrompt = "Eres un gestor de tareas experto. Tu tarea es extraer datos del mensaje del usuario. " +
-                    "Responde SIEMPRE en JSON con este formato: " +
-                    "{\"accion\": \"CREAR\" o \"LISTAR\" o \"DESCONOCIDO\", " +
-                    "\"descripcion\": \"texto\", \"area\": \"texto\", \"responsable\": \"texto\"}. " +
-                    "REGLAS: " +
-                    "1. Si el usuario pide añadir, crear, anotar o guardar algo, usa CREAR. " +
-                    "2. Si el usuario pregunta qué hay, pide la lista o consulta, usa LISTAR. " +
-                    "3. Si faltan datos como el área o responsable en CREAR, pon 'No especificado'. " +
-                    "4. No hables, solo devuelve el JSON.";
+            String systemPrompt = "Extract task info. Respond ONLY with JSON format: " +
+                    "{\"accion\": \"CREAR\"|\"LISTAR\"|\"DESCONOCIDO\", \"descripcion\": \"text\", \"area\": \"text\", \"responsable\": \"text\"}. " +
+                    "If user wants to add/create: CREAR. If user wants to see/list: LISTAR. Else: DESCONOCIDO.";
 
             Map<String, Object> body = Map.of(
                     "model", "llama3-8b-8192",
@@ -40,6 +34,7 @@ public class GroqService {
                             Map.of("role", "system", "content", systemPrompt),
                             Map.of("role", "user", "content", mensajeUsuario)
                     },
+                    "temperature", 0.0,
                     "response_format", Map.of("type", "json_object")
             );
 
@@ -51,10 +46,18 @@ public class GroqService {
                     .build();
 
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            
+            // LOGS PARA DIAGNÓSTICO
+            System.out.println("GROQ_RAW_RESPONSE: " + response.body());
+
             JsonNode root = objectMapper.readTree(response.body());
-            return root.path("choices").get(0).path("message").path("content").asText();
+            if (root.has("choices")) {
+                return root.path("choices").get(0).path("message").path("content").asText();
+            }
+            return "{\"accion\":\"DESCONOCIDO\"}";
 
         } catch (Exception e) {
+            System.err.println("GROQ_ERROR: " + e.getMessage());
             return "{\"accion\":\"DESCONOCIDO\"}";
         }
     }
