@@ -24,13 +24,15 @@ public class GroqService {
         try {
             HttpClient client = HttpClient.newHttpClient();
             
-            // System Prompt para que la IA sepa qué hacer
-            String systemPrompt = "Eres un asistente de gestión de tareas. Tu objetivo es extraer información de mensajes en lenguaje natural. " +
-                    "Debes responder ÚNICAMENTE con un objeto JSON que tenga los campos: " +
-                    "'accion' (puede ser: CREAR, LISTAR, COMPLETAR, DESCONOCIDO), " +
-                    "'descripcion', 'area', 'responsable'. " +
-                    "Si el usuario dice de crear algo, usa CREAR. Si pide ver tareas, usa LISTAR. " +
-                    "Si no entiendes, usa DESCONOCIDO.";
+            String systemPrompt = "Eres un gestor de tareas experto. Tu tarea es extraer datos del mensaje del usuario. " +
+                    "Responde SIEMPRE en JSON con este formato: " +
+                    "{\"accion\": \"CREAR\" o \"LISTAR\" o \"DESCONOCIDO\", " +
+                    "\"descripcion\": \"texto\", \"area\": \"texto\", \"responsable\": \"texto\"}. " +
+                    "REGLAS: " +
+                    "1. Si el usuario pide añadir, crear, anotar o guardar algo, usa CREAR. " +
+                    "2. Si el usuario pregunta qué hay, pide la lista o consulta, usa LISTAR. " +
+                    "3. Si faltan datos como el área o responsable en CREAR, pon 'No especificado'. " +
+                    "4. No hables, solo devuelve el JSON.";
 
             Map<String, Object> body = Map.of(
                     "model", "llama3-8b-8192",
@@ -53,8 +55,7 @@ public class GroqService {
             return root.path("choices").get(0).path("message").path("content").asText();
 
         } catch (Exception e) {
-            e.printStackTrace();
-            return "{\"accion\":\"ERROR\"}";
+            return "{\"accion\":\"DESCONOCIDO\"}";
         }
     }
 }
