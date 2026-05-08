@@ -29,7 +29,7 @@ public class GroqService {
                     "If user wants to add/create: CREAR. If user wants to see/list: LISTAR. Else: DESCONOCIDO.";
 
             Map<String, Object> body = Map.of(
-                    "model", "llama3-8b-8192",
+                    "model", "llama-3.1-8b-instant",
                     "messages", new Object[]{
                             Map.of("role", "system", "content", systemPrompt),
                             Map.of("role", "user", "content", mensajeUsuario)
