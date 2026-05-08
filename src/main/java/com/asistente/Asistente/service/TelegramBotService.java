@@ -28,9 +28,6 @@ public class TelegramBotService implements LongPollingSingleThreadUpdateConsumer
     @Value("${bot.token:NOT_FOUND}")
     private String botToken;
 
-    @Value("${groq.api.key:NOT_FOUND}")
-    private String groqKey;
-
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Autowired
@@ -41,23 +38,14 @@ public class TelegramBotService implements LongPollingSingleThreadUpdateConsumer
 
     @PostConstruct
     public void start() {
-        System.out.println("DIAGNOSTICO: Iniciando chequeo de Bot...");
-        System.out.println("DIAGNOSTICO: Token encontrado: " + (botToken.equals("NOT_FOUND") ? "NO" : "SI (comienza con " + botToken.substring(0, 4) + ")"));
-        System.out.println("DIAGNOSTICO: Groq Key encontrada: " + (groqKey.equals("NOT_FOUND") ? "NO" : "SI"));
-
-        if (botToken.equals("NOT_FOUND") || botToken.isEmpty() || botToken.contains("${")) {
-            System.err.println("BOT: Error - El Token no se ha cargado desde las variables de entorno.");
-            return;
-        }
-
+        if (botToken.equals("NOT_FOUND") || botToken.isEmpty()) return;
         try {
             this.telegramClient = new OkHttpTelegramClient(botToken);
             this.botApplication = new TelegramBotsLongPollingApplication();
             this.botApplication.registerBot(botToken, this);
-            System.out.println("BOT: !!! Registrado con éxito y escuchando mensajes !!!");
+            System.out.println("BOT: Iniciado.");
         } catch (Exception e) {
-            System.err.println("BOT: Error crítico al registrar: " + e.getMessage());
-            e.printStackTrace();
+            System.err.println("BOT: Error: " + e.getMessage());
         }
     }
 
@@ -71,14 +59,20 @@ public class TelegramBotService implements LongPollingSingleThreadUpdateConsumer
         if (update.hasMessage() && update.getMessage().hasText()) {
             String messageText = update.getMessage().getText();
             long chatId = update.getMessage().getChatId();
-            System.out.println("BOT: Mensaje recibido de " + chatId + ": " + messageText);
 
             if (messageText.startsWith("/")) {
-                if (messageText.equals("/start")) enviarMensaje(chatId, "¡Hola! Soy tu asistente. Estoy vivo.");
-                else if (messageText.equals("/listar")) enviarMensaje(chatId, obtenerListaPendientes());
+                manejarComandos(chatId, messageText);
             } else {
                 procesarConIA(chatId, messageText);
             }
+        }
+    }
+
+    private void manejarComandos(long chatId, String command) {
+        if (command.equals("/start")) {
+            enviarMensaje(chatId, "¡Hola! Soy tu asistente. Puedo crear tareas si me dices algo como: 'Añadir reparar motor en área 1, responsable Luis'");
+        } else if (command.equals("/listar")) {
+            enviarMensaje(chatId, obtenerListaPendientes());
         }
     }
 
@@ -94,21 +88,32 @@ public class TelegramBotService implements LongPollingSingleThreadUpdateConsumer
                 p.setArea(nodo.path("area").asText());
                 p.setResponsable(nodo.path("responsable").asText());
                 p.setEstado("Pendiente");
+                
+                // Si la IA no encontró descripción, no es una orden de crear válida
+                if (p.getDescripcion().equals("No especificado") || p.getDescripcion().isEmpty()) {
+                    enviarMensaje(chatId, "Entiendo que quieres crear algo, pero ¿podrías decirme qué tarea exactamente?");
+                    return;
+                }
+
                 pendienteRepository.save(p);
-                enviarMensaje(chatId, "✅ Tarea creada: " + p.getDescripcion());
-            } else {
-                enviarMensaje(chatId, obtenerListaPendientes());
+                enviarMensaje(chatId, "✅ Tarea registrada:\n📝 " + p.getDescripcion() + "\n📍 Área: " + p.getArea() + "\n👤 Responsable: " + p.getResponsable());
+            } 
+            else if ("LISTAR".equals(accion)) {
+                enviarMensaje(chatId, "📋 Aquí tienes tus pendientes actuales:\n" + obtenerListaPendientes());
+            } 
+            else {
+                enviarMensaje(chatId, "No estoy seguro de qué quieres hacer. Prueba diciendo: 'Crea un pendiente de...' o 'Lista mis tareas'.");
             }
         } catch (Exception e) {
-            enviarMensaje(chatId, "Error con la IA: " + e.getMessage());
+            enviarMensaje(chatId, "Ups, tuve un problema con mi cerebro de IA.");
         }
     }
 
     private String obtenerListaPendientes() {
         List<Pendiente> pendientes = pendienteRepository.findAll();
-        if (pendientes.isEmpty()) return "No hay pendientes.";
+        if (pendientes.isEmpty()) return "No hay pendientes registrados.";
         return pendientes.stream()
-                .map(p -> "- " + p.getDescripcion() + " (" + p.getResponsable() + ")")
+                .map(p -> String.format("- %s (Área: %s, Resp: %s)", p.getDescripcion(), p.getArea(), p.getResponsable()))
                 .collect(Collectors.joining("\n"));
     }
 
@@ -116,8 +121,6 @@ public class TelegramBotService implements LongPollingSingleThreadUpdateConsumer
         if (telegramClient == null) return;
         try {
             telegramClient.execute(SendMessage.builder().chatId(chatId).text(texto).build());
-        } catch (Exception e) {
-            System.err.println("BOT: Error al enviar mensaje: " + e.getMessage());
-        }
+        } catch (Exception e) { }
     }
 }
