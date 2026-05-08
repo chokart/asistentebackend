@@ -12,10 +12,17 @@ import org.springframework.stereotype.Service;
 import org.telegram.telegrambots.client.okhttp.OkHttpTelegramClient;
 import org.telegram.telegrambots.longpolling.TelegramBotsLongPollingApplication;
 import org.telegram.telegrambots.longpolling.util.LongPollingSingleThreadUpdateConsumer;
+import org.telegram.telegrambots.meta.api.methods.GetFile;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.Update;
+import org.telegram.telegrambots.meta.api.objects.Voice;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
 
+import java.io.File;
+import java.io.InputStream;
+import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -43,9 +50,8 @@ public class TelegramBotService implements LongPollingSingleThreadUpdateConsumer
             this.telegramClient = new OkHttpTelegramClient(botToken);
             this.botApplication = new TelegramBotsLongPollingApplication();
             this.botApplication.registerBot(botToken, this);
-            System.out.println("BOT: Iniciado.");
         } catch (Exception e) {
-            System.err.println("BOT: Error: " + e.getMessage());
+            System.err.println("BOT_ERROR: " + e.getMessage());
         }
     }
 
@@ -56,21 +62,52 @@ public class TelegramBotService implements LongPollingSingleThreadUpdateConsumer
 
     @Override
     public void consume(Update update) {
-        if (update.hasMessage() && update.getMessage().hasText()) {
-            String messageText = update.getMessage().getText();
-            long chatId = update.getMessage().getChatId();
+        if (!update.hasMessage()) return;
 
-            if (messageText.startsWith("/")) {
-                manejarComandos(chatId, messageText);
-            } else {
-                procesarConIA(chatId, messageText);
+        long chatId = update.getMessage().getChatId();
+
+        if (update.getMessage().hasText()) {
+            String text = update.getMessage().getText();
+            if (text.startsWith("/")) manejarComandos(chatId, text);
+            else procesarConIA(chatId, text);
+        } 
+        else if (update.getMessage().hasVoice()) {
+            manejarVoz(chatId, update.getMessage().getVoice());
+        }
+    }
+
+    private void manejarVoz(long chatId, Voice voice) {
+        try {
+            enviarMensaje(chatId, "Escuchando audio... 🎧");
+            
+            // 1. Obtener la ruta del archivo en Telegram
+            org.telegram.telegrambots.meta.api.objects.File fileMetadata = telegramClient.execute(new GetFile(voice.getFileId()));
+            String fileUrl = "https://api.telegram.org/file/bot" + botToken + "/" + fileMetadata.getFilePath();
+            
+            // 2. Descargar el audio temporalmente
+            File tempFile = File.createTempFile("voice", ".ogg");
+            try (InputStream in = new URL(fileUrl).openStream()) {
+                Files.copy(in, tempFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
             }
+            
+            // 3. Transcribir con Groq
+            String textoTranscrito = groqService.transcribirAudio(tempFile);
+            tempFile.delete();
+            
+            if (textoTranscrito.isEmpty()) {
+                enviarMensaje(chatId, "No pude entender el audio. ¿Puedes repetirlo?");
+            } else {
+                enviarMensaje(chatId, "Entendido: \"" + textoTranscrito + "\"");
+                procesarConIA(chatId, textoTranscrito);
+            }
+        } catch (Exception e) {
+            enviarMensaje(chatId, "Error al procesar el audio.");
         }
     }
 
     private void manejarComandos(long chatId, String command) {
         if (command.equals("/start")) {
-            enviarMensaje(chatId, "¡Hola! Soy tu asistente. Puedo crear tareas si me dices algo como: 'Añadir reparar motor en área 1, responsable Luis'");
+            enviarMensaje(chatId, "¡Hola! Puedes hablarme o enviarme audios para gestionar tus tareas.");
         } else if (command.equals("/listar")) {
             enviarMensaje(chatId, obtenerListaPendientes());
         }
@@ -89,38 +126,30 @@ public class TelegramBotService implements LongPollingSingleThreadUpdateConsumer
                 p.setResponsable(nodo.path("responsable").asText());
                 p.setEstado("Pendiente");
                 
-                // Si la IA no encontró descripción, no es una orden de crear válida
                 if (p.getDescripcion().equals("No especificado") || p.getDescripcion().isEmpty()) {
-                    enviarMensaje(chatId, "Entiendo que quieres crear algo, pero ¿podrías decirme qué tarea exactamente?");
+                    enviarMensaje(chatId, "No entendí qué tarea quieres crear. ¿Podrías ser más específico?");
                     return;
                 }
 
                 pendienteRepository.save(p);
-                enviarMensaje(chatId, "✅ Tarea registrada:\n📝 " + p.getDescripcion() + "\n📍 Área: " + p.getArea() + "\n👤 Responsable: " + p.getResponsable());
-            } 
-            else if ("LISTAR".equals(accion)) {
-                enviarMensaje(chatId, "📋 Aquí tienes tus pendientes actuales:\n" + obtenerListaPendientes());
-            } 
-            else {
-                enviarMensaje(chatId, "No estoy seguro de qué quieres hacer. Prueba diciendo: 'Crea un pendiente de...' o 'Lista mis tareas'.");
+                enviarMensaje(chatId, "✅ Tarea registrada:\n📝 " + p.getDescripcion() + "\n👤 Resp: " + p.getResponsable());
+            } else {
+                enviarMensaje(chatId, obtenerListaPendientes());
             }
         } catch (Exception e) {
-            enviarMensaje(chatId, "Ups, tuve un problema con mi cerebro de IA.");
+            enviarMensaje(chatId, "Error con la IA.");
         }
     }
 
     private String obtenerListaPendientes() {
         List<Pendiente> pendientes = pendienteRepository.findAll();
-        if (pendientes.isEmpty()) return "No hay pendientes registrados.";
+        if (pendientes.isEmpty()) return "No hay pendientes.";
         return pendientes.stream()
-                .map(p -> String.format("- %s (Área: %s, Resp: %s)", p.getDescripcion(), p.getArea(), p.getResponsable()))
+                .map(p -> "- " + p.getDescripcion() + " (" + p.getResponsable() + ")")
                 .collect(Collectors.joining("\n"));
     }
 
     private void enviarMensaje(long chatId, String texto) {
-        if (telegramClient == null) return;
-        try {
-            telegramClient.execute(SendMessage.builder().chatId(chatId).text(texto).build());
-        } catch (Exception e) { }
+        try { telegramClient.execute(SendMessage.builder().chatId(chatId).text(texto).build()); } catch (Exception e) { }
     }
 }
